@@ -5,17 +5,30 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>POP Resize 640</title>
   <style>
-    body{font-family:system-ui,Segoe UI,Meiryo,sans-serif;margin:20px;max-width:920px}
+    body{font-family:system-ui,Segoe UI,Meiryo,sans-serif;margin:20px;max-width:1100px}
     h1{font-size:18px;margin:0 0 8px}
     .note{color:#666;font-size:13px;margin:0 0 16px}
-    .box{border:2px dashed #aaa;border-radius:14px;padding:18px;text-align:center}
+    .pill{display:inline-block;background:#111;color:#fff;padding:2px 10px;border-radius:999px;font-size:12px;margin-left:6px}
+    .box{border:2px dashed #aaa;border-radius:14px;padding:16px;text-align:center}
     .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;align-items:center}
     input,button{padding:10px 12px;font-size:14px}
+    input[type="text"]{min-width:260px}
     button{cursor:pointer;border:0;border-radius:12px}
     button:disabled{opacity:.6;cursor:not-allowed}
-    #log{white-space:pre-wrap;background:#f7f7f7;border-radius:14px;padding:12px;margin-top:12px}
-    .pill{display:inline-block;background:#111;color:#fff;padding:2px 10px;border-radius:999px;font-size:12px;margin-left:6px}
+    .btn{background:#111;color:#fff}
+    .btn2{background:#e9e9e9;color:#111}
+    .btnDanger{background:#ffefef;color:#a40000}
     .hint{color:#666;font-size:12px}
+    table{width:100%;border-collapse:separate;border-spacing:0 8px;margin-top:12px}
+    th{font-size:12px;color:#666;text-align:left;padding:0 10px}
+    td{background:#f7f7f7;border-radius:12px;padding:10px;vertical-align:middle}
+    .cellFlex{display:flex;gap:10px;align-items:center}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px}
+    .small{font-size:12px;color:#666}
+    .bad{outline:2px solid #ff4d4d}
+    #log{white-space:pre-wrap;background:#f7f7f7;border-radius:14px;padding:12px;margin-top:12px}
+    .right{margin-left:auto}
+    .tagline{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
   </style>
 </head>
 <body>
@@ -23,47 +36,89 @@
   <p class="note">画像はアップロードされません。変換はブラウザ内で完結し、サイト側にログやデータは残りません。</p>
 
   <div class="box" id="drop">
-    ここに画像をドラッグ＆ドロップ（複数OK）<br/>
-    <small style="color:#666;">または</small><br/>
-    <input id="files" type="file" accept="image/*" multiple />
+    ここに画像をドラッグ＆ドロップ（追加OK）<br/>
+    <span class="small">または</span><br/>
+    <button class="btn2" id="addBtn">ファイルを追加</button>
+    <input id="filePicker" type="file" accept="image/*" multiple style="display:none" />
   </div>
 
-  <div class="row">
-    <label>タグ（任意）：
-      <input id="tag" value="" placeholder="例：gogo / new / guest / rank" />
+  <div class="row tagline">
+    <label>共通タグ（任意）：
+      <input id="tag" type="text" placeholder="例：gogo / new / guest / rank" />
+    </label>
+
+    <label>日付：
+      <input id="date" type="text" style="min-width:140px" />
+    </label>
+
+    <label class="small">
+      <input id="dateOn" type="checkbox" checked />
+      日付をファイル名に入れる
     </label>
 
     <label>連番開始：
-      <input id="start" type="number" value="1" min="1" />
+      <input id="start" type="number" value="1" min="1" style="min-width:90px" />
     </label>
 
-    <button id="go">変換してZIPダウンロード</button>
-    <span class="hint">出力例：pop_gogo_20251215_001.jpg（未入力時は pop_pop_… ではなく pop_20251215_…）</span>
+    <button class="btn2" id="regen">既定名を再生成</button>
+    <button class="btn2" id="renum">連番振り直し</button>
+    <button class="btnDanger" id="clear">全削除</button>
+
+    <span class="hint right">既定名：<span class="mono" id="sampleName"></span></span>
   </div>
 
-  <div id="log">ファイル未選択</div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:42%">元ファイル</th>
+        <th style="width:46%">出力ファイル名（編集可）</th>
+        <th style="width:12%">操作</th>
+      </tr>
+    </thead>
+    <tbody id="list"></tbody>
+  </table>
+
+  <div class="row">
+    <button class="btn" id="zip">まとめてZIP作成</button>
+    <span class="hint">出力：JPG / 横640（640未満は維持） / quality 0.85</span>
+  </div>
+
+  <div id="log">ファイル未追加</div>
 
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script>
     const $ = (id)=>document.getElementById(id);
 
-    function yyyymmdd(){
-      const d=new Date();
+    // ===== ユーティリティ =====
+    function yyyymmdd(d=new Date()){
       const y=d.getFullYear();
       const m=String(d.getMonth()+1).padStart(2,'0');
       const da=String(d.getDate()).padStart(2,'0');
       return `${y}${m}${da}`;
     }
 
-    // 半角：英数と_だけに寄せる
-    function sanitizeAscii(s){
+    // 半角（英数と_ - . だけに寄せる）
+    function sanitizeName(s){
       return (s || '')
         .normalize('NFKD')
-        .replace(/[^\w]+/g,'_')
+        .replace(/[^\w.\-]+/g,'_')   // 許可：英数_ . -
         .replace(/^_+|_+$/g,'')
         .toLowerCase()
-        .slice(0, 32);
+        .slice(0, 80);
     }
+
+    function stripExt(name){
+      return name.replace(/\.[^.]+$/,'');
+    }
+
+    function extOf(name){
+      const m = name.match(/\.([^.]+)$/);
+      return m ? m[1].toLowerCase() : '';
+    }
+
+    function pad3(n){ return String(n).padStart(3,'0'); }
+
+    function bytesKB(b){ return `${Math.round(b/1024)}KB`; }
 
     // 横幅640固定（640未満は拡大しない）
     function calcSize(w,h){
@@ -82,10 +137,8 @@
       canvas.height = sz.h;
 
       const ctx = canvas.getContext('2d');
-      // JPGは透過不可なので白背景
-      ctx.fillStyle = '#fff';
+      ctx.fillStyle = '#fff'; // JPGなので白背景
       ctx.fillRect(0, 0, sz.w, sz.h);
-
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(bmp, 0, 0, sz.w, sz.h);
@@ -104,13 +157,180 @@
       URL.revokeObjectURL(url);
     }
 
-    let picked = [];
+    // ===== 既定名生成 =====
+    function buildDefaultName(seq){
+      const tag = sanitizeName($('tag').value).replace(/\./g,'_'); // タグに . は不要なので _
+      const dateStr = sanitizeName($('date').value);
+      const useDate = $('dateOn').checked;
 
-    $('files').addEventListener('change', (e)=>{
-      picked = Array.from(e.target.files||[]).filter(f=>f.type.startsWith('image/'));
-      $('log').textContent = picked.length
-        ? `選択中：${picked.length} 件\n（「変換してZIPダウンロード」を押してください）`
-        : 'ファイル未選択';
+      const parts = [];
+      parts.push('pop');
+      if(tag) parts.push(tag);
+      if(useDate && dateStr) parts.push(dateStr);
+      parts.push(pad3(seq));
+      return parts.join('_') + '.jpg';
+    }
+
+    function updateSample(){
+      const start = parseInt($('start').value || '1', 10);
+      $('sampleName').textContent = buildDefaultName(start);
+    }
+
+    // ===== キュー（リスト）管理 =====
+    const queue = []; // { id, file, outName }
+
+    function nextSeqBase(){
+      const start = parseInt($('start').value || '1', 10);
+      return start;
+    }
+
+    function addFiles(files){
+      const imgs = Array.from(files || []).filter(f=>f.type.startsWith('image/'));
+      if(!imgs.length) return;
+
+      const base = nextSeqBase();
+      const offset = queue.length;
+
+      for(let i=0;i<imgs.length;i++){
+        const file = imgs[i];
+        const seq = base + offset + i;
+        queue.push({
+          id: crypto.randomUUID(),
+          file,
+          outName: buildDefaultName(seq),
+        });
+      }
+      render();
+      log(`追加：${imgs.length} 件`);
+    }
+
+    function removeById(id){
+      const idx = queue.findIndex(x=>x.id===id);
+      if(idx>=0){
+        queue.splice(idx,1);
+        render();
+      }
+    }
+
+    function render(){
+      const tbody = $('list');
+      tbody.innerHTML = '';
+
+      if(queue.length===0){
+        $('log').textContent = 'ファイル未追加';
+        return;
+      }
+
+      queue.forEach((item, idx)=>{
+        const tr = document.createElement('tr');
+
+        // 元ファイル
+        const tdA = document.createElement('td');
+        tdA.innerHTML = `
+          <div class="cellFlex">
+            <div>
+              <div class="mono">${escapeHtml(item.file.name)}</div>
+              <div class="small">サイズ：${bytesKB(item.file.size)}</div>
+            </div>
+          </div>
+        `;
+
+        // 出力名（編集）
+        const tdB = document.createElement('td');
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = item.outName;
+        input.className = 'mono';
+        input.style.width = '100%';
+
+        input.addEventListener('input', ()=>{
+          // 入力のたびにサニタイズ（ただし拡張子 .jpg は維持）
+          let v = input.value.trim();
+          v = sanitizeName(v);
+          if(!v) v = 'pop_' + pad3(idx+1) + '.jpg';
+
+          // 拡張子強制
+          const e = extOf(v);
+          if(e !== 'jpg' && e !== 'jpeg'){
+            v = stripExt(v) + '.jpg';
+          } else if(e === 'jpeg'){
+            v = stripExt(v) + '.jpg';
+          }
+
+          item.outName = v;
+          input.value = v;
+          validateAll(); // 重複チェック
+        });
+
+        tdB.appendChild(input);
+
+        // 操作
+        const tdC = document.createElement('td');
+        const btn = document.createElement('button');
+        btn.textContent = '削除';
+        btn.className = 'btn2';
+        btn.addEventListener('click', ()=>removeById(item.id));
+        tdC.appendChild(btn);
+
+        tr.appendChild(tdA);
+        tr.appendChild(tdB);
+        tr.appendChild(tdC);
+
+        tbody.appendChild(tr);
+      });
+
+      validateAll();
+      updateSample();
+    }
+
+    function escapeHtml(s){
+      return String(s)
+        .replaceAll('&','&amp;')
+        .replaceAll('<','&lt;')
+        .replaceAll('>','&gt;')
+        .replaceAll('"','&quot;')
+        .replaceAll("'","&#039;");
+    }
+
+    function validateAll(){
+      // 重複名・空・拡張子チェック
+      const seen = new Map();
+      let ok = true;
+
+      // inputs を引っ張る（render後のみ）
+      const inputs = Array.from(document.querySelectorAll('#list input[type="text"]'));
+      inputs.forEach((inp, i)=>{
+        inp.classList.remove('bad');
+        const v = (inp.value || '').trim().toLowerCase();
+        if(!v || !v.endsWith('.jpg')){
+          ok = false;
+          inp.classList.add('bad');
+          return;
+        }
+        if(seen.has(v)){
+          ok = false;
+          inp.classList.add('bad');
+          inputs[seen.get(v)].classList.add('bad');
+        }else{
+          seen.set(v, i);
+        }
+      });
+
+      $('zip').disabled = !ok || queue.length===0;
+      return ok;
+    }
+
+    function log(msg){
+      const head = `キュー：${queue.length} 件`;
+      const lines = queue.slice(0, 50).map((q, i)=>`- ${q.file.name} → ${q.outName}`);
+      $('log').textContent = `${head}\n${msg}\n\n${lines.join('\n')}${queue.length>50?'\n…':''}`;
+    }
+
+    // ===== ボタン動作 =====
+    $('addBtn').addEventListener('click', ()=>$('filePicker').click());
+    $('filePicker').addEventListener('change', (e)=>{
+      addFiles(e.target.files);
+      e.target.value = ''; // 同じファイルを再追加できるように
     });
 
     const drop = $('drop');
@@ -118,59 +338,104 @@
     drop.addEventListener('dragleave', ()=>{ drop.style.borderColor='#aaa'; });
     drop.addEventListener('drop', (e)=>{
       e.preventDefault(); drop.style.borderColor='#aaa';
-      picked = Array.from(e.dataTransfer.files||[]).filter(f=>f.type.startsWith('image/'));
-      $('log').textContent = picked.length
-        ? `ドロップ：${picked.length} 件\n（「変換してZIPダウンロード」を押してください）`
-        : '画像がありません';
+      addFiles(e.dataTransfer.files);
     });
 
-    $('go').addEventListener('click', async ()=>{
-      if(!picked.length){
-        $('log').textContent = '画像を選択してください';
+    // 既定名を再生成（今のタグ/日付/開始番号で、全件上書き）
+    $('regen').addEventListener('click', ()=>{
+      if(queue.length===0) return;
+      const base = nextSeqBase();
+      for(let i=0;i<queue.length;i++){
+        queue[i].outName = buildDefaultName(base + i);
+      }
+      render();
+      log('既定名を再生成しました');
+    });
+
+    // 連番振り直し（既存の名前の「末尾 _NNN」だけ置き換える。無ければ末尾に付与）
+    $('renum').addEventListener('click', ()=>{
+      if(queue.length===0) return;
+      const base = nextSeqBase();
+      for(let i=0;i<queue.length;i++){
+        const seq = pad3(base + i);
+        let name = queue[i].outName;
+
+        // .jpg を除いた部分
+        const stem = stripExt(name);
+        // 末尾の _### を探す
+        const m = stem.match(/^(.*?)(?:_(\d{3}))$/);
+        let newStem;
+        if(m){
+          newStem = `${m[1]}_${seq}`;
+        }else{
+          newStem = `${stem}_${seq}`;
+        }
+        queue[i].outName = sanitizeName(newStem) + '.jpg';
+      }
+      render();
+      log('連番を振り直しました');
+    });
+
+    $('clear').addEventListener('click', ()=>{
+      queue.length = 0;
+      render();
+      $('log').textContent = 'ファイル未追加';
+    });
+
+    // ZIP作成
+    $('zip').addEventListener('click', async ()=>{
+      if(queue.length===0) return;
+      if(!validateAll()){
+        log('エラー：出力名が不正（重複 / 空 / .jpg以外）です');
         return;
       }
 
-      const btn = $('go');
+      const btn = $('zip');
       btn.disabled = true;
 
       try{
-        const rawTag = $('tag').value || '';
-        const tag = sanitizeAscii(rawTag);
-        const start = parseInt($('start').value || '1', 10);
-        const dateStr = yyyymmdd();
         const quality = 0.85;
-
-        // タグ未入力なら「pop_<date>_...」にする（pop_pop_... を避ける）
-        const head = tag ? `pop_${tag}_${dateStr}_` : `pop_${dateStr}_`;
-
         const zip = new JSZip();
-        let log = `処理開始：${picked.length} 件\n出力：JPG / 横640（640未満は維持） / quality ${quality}\n`;
-        log += tag ? `タグ：${tag}\n\n` : `タグ：なし\n\n`;
 
-        for(let i=0;i<picked.length;i++){
-          const file = picked[i];
-          const num = String(start+i).padStart(3,'0');
-          const outName = `${head}${num}.jpg`;
+        let outLog = `処理開始：${queue.length} 件\n出力：JPG / 横640（640未満は維持） / quality ${quality}\n\n`;
 
-          const blob = await toJpegBlob(file, quality);
-          zip.file(outName, blob);
-
-          log += `✓ ${file.name} → ${outName} (${Math.round(blob.size/1024)}KB)\n`;
-          $('log').textContent = log + `\nZIP生成中…`;
+        for(let i=0;i<queue.length;i++){
+          const item = queue[i];
+          const blob = await toJpegBlob(item.file, quality);
+          zip.file(item.outName, blob);
+          outLog += `✓ ${item.file.name} → ${item.outName} (${bytesKB(blob.size)})\n`;
+          $('log').textContent = outLog + `\nZIP生成中…`;
         }
 
         const outZip = await zip.generateAsync({type:'blob'});
-        const zipName = tag ? `pop_${tag}_${dateStr}.zip` : `pop_${dateStr}.zip`;
-        downloadBlob(outZip, zipName);
 
-        $('log').textContent = log + `\n完了：ZIPをダウンロードしました`;
+        const tag = sanitizeName($('tag').value).replace(/\./g,'_');
+        const useDate = $('dateOn').checked;
+        const dateStr = sanitizeName($('date').value);
+
+        const zipNameParts = ['pop'];
+        if(tag) zipNameParts.push(tag);
+        if(useDate && dateStr) zipNameParts.push(dateStr);
+        const zipName = zipNameParts.join('_') + '.zip';
+
+        downloadBlob(outZip, zipName);
+        $('log').textContent = outLog + `\n完了：ZIPをダウンロードしました（${zipName}）`;
       } catch (err){
         $('log').textContent = `エラー：${err?.message || err}`;
       } finally {
         btn.disabled = false;
       }
     });
+
+    // タグ/日付/開始番号の変更 → サンプル更新
+    ['tag','date','start','dateOn'].forEach(id=>{
+      $(id).addEventListener('input', updateSample);
+      $(id).addEventListener('change', updateSample);
+    });
+
+    // 初期値
+    $('date').value = yyyymmdd();
+    updateSample();
   </script>
 </body>
 </html>
-
