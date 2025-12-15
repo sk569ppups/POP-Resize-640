@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>POP 640 JPG 変換</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Meiryo,sans-serif;margin:20px;max-width:920px}
+    h1{font-size:18px;margin:0 0 8px}
+    .note{color:#666;font-size:13px;margin:0 0 16px}
+    .box{border:2px dashed #aaa;border-radius:14px;padding:18px;text-align:center}
+    .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;align-items:center}
+    input,button{padding:10px 12px;font-size:14px}
+    button{cursor:pointer;border:0;border-radius:12px}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    #log{white-space:pre-wrap;background:#f7f7f7;border-radius:14px;padding:12px;margin-top:12px}
+    .pill{display:inline-block;background:#111;color:#fff;padding:2px 10px;border-radius:999px;font-size:12px;margin-left:6px}
+  </style>
+</head>
+<body>
+  <h1>POP 画像変換（横640 / JPG / 半角ファイル名）<span class="pill">ローカル処理</span></h1>
+  <p class="note">画像はアップロードされません。変換はブラウザ内で完結し、サイト側にログやデータは残りません。</p>
+
+  <div class="box" id="drop">
+    ここに画像をドラッグ＆ドロップ（複数OK）<br/>
+    <small style="color:#666;">または</small><br/>
+    <input id="files" type="file" accept="image/*" multiple />
+  </div>
+
+  <div class="row">
+    <label>プレフィックス：
+      <input id="prefix" value="pop_" />
+    </label>
+
+    <label>連番開始：
+      <input id="start" type="number" value="1" min="1" />
+    </label>
+
+    <button id="go">変換してZIPダウンロード</button>
+  </div>
+
+  <div id="log">ファイル未選択</div>
+
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script>
+    const $ = (id)=>document.getElementById(id);
+
+    function yyyymmdd(){
+      const d=new Date();
+      const y=d.getFullYear();
+      const m=String(d.getMonth()+1).padStart(2,'0');
+      const da=String(d.getDate()).padStart(2,'0');
+      return `${y}${m}${da}`;
+    }
+
+    // 完全半角：英数と_だけに寄せる（念のため）
+    function sanitizeAscii(s){
+      return (s || '')
+        .normalize('NFKD')
+        .replace(/[^\w]+/g,'_')
+        .replace(/^_+|_+$/g,'')
+        .toLowerCase();
+    }
+
+    // 横幅640固定（640未満は拡大しない）
+    function calcSize(w,h){
+      if (w <= 640) return {w, h};
+      const nw = 640;
+      const nh = Math.round(h*(nw/w));
+      return {w:nw, h:nh};
+    }
+
+    async function toJpegBlob(file, quality){
+      const bmp = await createImageBitmap(file);
+      const sz = calcSize(bmp.width, bmp.height);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = sz.w;
+      canvas.height = sz.h;
+
+      const ctx = canvas.getContext('2d');
+      // JPGは透過不可なので、白背景を敷く（事故防止）
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, sz.w, sz.h);
+
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(bmp, 0, 0, sz.w, sz.h);
+
+      return await new Promise((resolve)=>{
+        canvas.toBlob(b=>resolve(b), 'image/jpeg', quality);
+      });
+    }
+
+    function downloadBlob(blob, filename){
+      const a = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    let picked = [];
+
+    $('files').addEventListener('change', (e)=>{
+      picked = Array.from(e.target.files||[]).filter(f=>f.type.startsWith('image/'));
+      $('log').textContent = picked.length
+        ? `選択中：${picked.length} 件\n（「変換してZIPダウンロード」を押してください）`
+        : 'ファイル未選択';
+    });
+
+    const drop = $('drop');
+    drop.addEventListener('dragover', (e)=>{ e.preventDefault(); drop.style.borderColor='#333'; });
+    drop.addEventListener('dragleave', ()=>{ drop.style.borderColor='#aaa'; });
+    drop.addEventListener('drop', (e)=>{
+      e.preventDefault(); drop.style.borderColor='#aaa';
+      picked = Array.from(e.dataTransfer.files||[]).filter(f=>f.type.startsWith('image/'));
+      $('log').textContent = picked.length
+        ? `ドロップ：${picked.length} 件\n（「変換してZIPダウンロード」を押してください）`
+        : '画像がありません';
+    });
+
+    $('go').addEventListener('click', async ()=>{
+      if(!picked.length){
+        $('log').textContent = '画像を選択してください';
+        return;
+      }
+
+      const btn = $('go');
+      btn.disabled = true;
+
+      try{
+        const prefix = sanitizeAscii(($('prefix').value || 'pop_').normalize('NFKC')) || 'pop_';
+        const start = parseInt($('start').value || '1', 10);
+        const dateStr = yyyymmdd();
+        const quality = 0.85;
+
+        const zip = new JSZip();
+        let log = `処理開始：${picked.length} 件\n出力：JPG / 横640（640未満は維持） / quality ${quality}\n\n`;
+
+        for(let i=0;i<picked.length;i++){
+          const file = picked[i];
+          const num = String(start+i).padStart(3,'0');
+          const outName = `${prefix}${dateStr}_${num}.jpg`;
+
+          const blob = await toJpegBlob(file, quality);
+          zip.file(outName, blob);
+
+          log += `✓ ${file.name} → ${outName} (${Math.round(blob.size/1024)}KB)\n`;
+          $('log').textContent = log + `\nZIP生成中…`;
+        }
+
+        const outZip = await zip.generateAsync({type:'blob'});
+        downloadBlob(outZip, `pop_${dateStr}.zip`);
+
+        $('log').textContent = log + `\n完了：ZIPをダウンロードしました`;
+      } catch (err){
+        $('log').textContent = `エラー：${err?.message || err}`;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
