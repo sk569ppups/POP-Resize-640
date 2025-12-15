@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>POP 640 JPG 変換</title>
+  <title>POP Resize 640</title>
   <style>
     body{font-family:system-ui,Segoe UI,Meiryo,sans-serif;margin:20px;max-width:920px}
     h1{font-size:18px;margin:0 0 8px}
@@ -15,10 +15,11 @@
     button:disabled{opacity:.6;cursor:not-allowed}
     #log{white-space:pre-wrap;background:#f7f7f7;border-radius:14px;padding:12px;margin-top:12px}
     .pill{display:inline-block;background:#111;color:#fff;padding:2px 10px;border-radius:999px;font-size:12px;margin-left:6px}
+    .hint{color:#666;font-size:12px}
   </style>
 </head>
 <body>
-  <h1>POP 画像変換（横640 / JPG / 半角ファイル名）<span class="pill">ローカル処理</span></h1>
+  <h1>POP Resize 640（横640 / JPG / 半角ファイル名）<span class="pill">ローカル処理</span></h1>
   <p class="note">画像はアップロードされません。変換はブラウザ内で完結し、サイト側にログやデータは残りません。</p>
 
   <div class="box" id="drop">
@@ -28,8 +29,8 @@
   </div>
 
   <div class="row">
-    <label>プレフィックス：
-      <input id="prefix" value="pop_" />
+    <label>タグ（任意）：
+      <input id="tag" value="" placeholder="例：gogo / new / guest / rank" />
     </label>
 
     <label>連番開始：
@@ -37,6 +38,7 @@
     </label>
 
     <button id="go">変換してZIPダウンロード</button>
+    <span class="hint">出力例：pop_gogo_20251215_001.jpg（未入力時は pop_pop_… ではなく pop_20251215_…）</span>
   </div>
 
   <div id="log">ファイル未選択</div>
@@ -53,13 +55,14 @@
       return `${y}${m}${da}`;
     }
 
-    // 完全半角：英数と_だけに寄せる（念のため）
+    // 半角：英数と_だけに寄せる
     function sanitizeAscii(s){
       return (s || '')
         .normalize('NFKD')
         .replace(/[^\w]+/g,'_')
         .replace(/^_+|_+$/g,'')
-        .toLowerCase();
+        .toLowerCase()
+        .slice(0, 32);
     }
 
     // 横幅640固定（640未満は拡大しない）
@@ -79,7 +82,7 @@
       canvas.height = sz.h;
 
       const ctx = canvas.getContext('2d');
-      // JPGは透過不可なので、白背景を敷く（事故防止）
+      // JPGは透過不可なので白背景
       ctx.fillStyle = '#fff';
       ctx.fillRect(0, 0, sz.w, sz.h);
 
@@ -131,18 +134,23 @@
       btn.disabled = true;
 
       try{
-        const prefix = sanitizeAscii(($('prefix').value || 'pop_').normalize('NFKC')) || 'pop_';
+        const rawTag = $('tag').value || '';
+        const tag = sanitizeAscii(rawTag);
         const start = parseInt($('start').value || '1', 10);
         const dateStr = yyyymmdd();
         const quality = 0.85;
 
+        // タグ未入力なら「pop_<date>_...」にする（pop_pop_... を避ける）
+        const head = tag ? `pop_${tag}_${dateStr}_` : `pop_${dateStr}_`;
+
         const zip = new JSZip();
-        let log = `処理開始：${picked.length} 件\n出力：JPG / 横640（640未満は維持） / quality ${quality}\n\n`;
+        let log = `処理開始：${picked.length} 件\n出力：JPG / 横640（640未満は維持） / quality ${quality}\n`;
+        log += tag ? `タグ：${tag}\n\n` : `タグ：なし\n\n`;
 
         for(let i=0;i<picked.length;i++){
           const file = picked[i];
           const num = String(start+i).padStart(3,'0');
-          const outName = `${prefix}${dateStr}_${num}.jpg`;
+          const outName = `${head}${num}.jpg`;
 
           const blob = await toJpegBlob(file, quality);
           zip.file(outName, blob);
@@ -152,7 +160,8 @@
         }
 
         const outZip = await zip.generateAsync({type:'blob'});
-        downloadBlob(outZip, `pop_${dateStr}.zip`);
+        const zipName = tag ? `pop_${tag}_${dateStr}.zip` : `pop_${dateStr}.zip`;
+        downloadBlob(outZip, zipName);
 
         $('log').textContent = log + `\n完了：ZIPをダウンロードしました`;
       } catch (err){
@@ -164,3 +173,4 @@
   </script>
 </body>
 </html>
+
